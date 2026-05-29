@@ -56,21 +56,27 @@ def get_config(config_path: str = "config.ini") -> dict:
 # Active-file resolution helpers
 # ---------------------------------------------------------------------------
 
-def find_active_file(title: str | None, vault_base: str) -> str | None:
+def find_active_file(
+    title: str | None,
+    vault_base: str,
+    project_name: str | None = None,
+) -> str | None:
     """
     Resolves the path of the markdown file currently open in the editor
     by searching the vault for a filename extracted from the window title.
 
     Strategy
     --------
-    If *title* contains a ``*.md`` filename, scan *vault_base* recursively
-    until that exact filename is found and return it.
+    If *title* contains a ``*.md`` filename, scan the vault for it.
+    The search is **scoped** to ``vault_base/project_name/`` when
+    *project_name* is supplied — this prevents common filenames such as
+    ``README.md`` from matching unrelated files in other vault projects.
 
-    The "most recently modified file" scan has been intentionally removed:
-    it produced random, unrelated locations when the title contained no .md
-    name (e.g. when a config file or terminal was active).
+    When *project_name* is given but has no corresponding folder in the
+    vault the function returns ``None`` immediately (the workspace is a
+    code-project, not a vault-project; workspace resolution will handle it).
 
-    Returns ``None`` when the vault base does not exist or no match is found.
+    Returns ``None`` when no match is found.
     """
     if not os.path.isdir(vault_base):
         return None
@@ -84,7 +90,22 @@ def find_active_file(title: str | None, vault_base: str) -> str | None:
         return None
 
     target_name = match.group(1)
-    for root, dirs, files in os.walk(vault_base):
+
+    # Scope the search to the project folder when we know which vault project
+    # the workspace belongs to.  This stops generic names like README.md from
+    # picking up files in unrelated vault subdirectories.
+    if project_name:
+        search_root = os.path.join(vault_base, project_name)
+        if not os.path.isdir(search_root):
+            print(
+                f"[*] Vault project '{project_name}' has no folder in vault "
+                "— skipping title scan."
+            )
+            return None
+    else:
+        search_root = vault_base
+
+    for root, dirs, files in os.walk(search_root):
         dirs[:] = [d for d in dirs if not d.startswith(".")]
         if target_name in files:
             found = os.path.join(root, target_name)
@@ -264,9 +285,15 @@ def main() -> None:
             print(f"[!] Warning: --active-file path does not exist: {active_file!r}. Ignoring.")
             active_file = None
 
-    # Only scan the vault by title when --active-file was not supplied at all
+    # Only scan the vault by title when --active-file was not supplied at all.
+    # Scope the scan to the workspace's vault project folder so common
+    # filenames (README.md, index.md, etc.) cannot match unrelated vault files.
     if active_file is None and args.active_file is None:
-        active_file = find_active_file(args.title, vault_base)
+        ws_project: str | None = None
+        if args.workspace:
+            ws_project = re.sub(r"^\d{14}[-_\s]*", "", args.workspace.strip())
+            ws_project = re.sub(r"\s*\(Workspace\).*", "", ws_project).strip() or None
+        active_file = find_active_file(args.title, vault_base, ws_project)
 
     assets_dir: str | None = None
 

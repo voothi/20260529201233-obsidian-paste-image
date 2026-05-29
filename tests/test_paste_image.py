@@ -192,7 +192,7 @@ class TestFindActiveFile(BaseVaultTest):
                                "20260529193801-my-note.md")
 
         title = "20260529193801-my-note.md - 20260308110646-kardenwort-mpv - Antigravity IDE"
-        found = find_active_file(title, self.vault)
+        found = find_active_file(title, self.vault, "kardenwort-mpv")
 
         self.assertIsNotNone(found)
         self.assertEqual(
@@ -231,19 +231,52 @@ class TestFindActiveFile(BaseVaultTest):
         result = find_active_file(
             "nonexistent-note.md - kardenwort-mpv - Antigravity IDE",
             self.vault,
+            "kardenwort-mpv",
         )
         self.assertIsNone(result)
 
-    def test_ignores_hidden_directories_during_title_scan(self):
-        """The vault scan skips dotfile directories when searching by title."""
-        hidden_md = self._make_md(".obsidian", "target-note.md")
-        visible_md = self._make_md("proj", "target-note.md")
+    def test_scoped_to_project_folder(self):
+        """
+        When project_name is given, only that project's vault folder is searched.
+        A file with the same name in a different vault project is NOT returned.
+        """
+        # Same filename in two different vault projects
+        correct = self._make_md("kardenwort-mpv", "conversations", "my-note.md")
+        _wrong  = self._make_md("other-project",  "conversations", "my-note.md")
 
-        title = "target-note.md - kardenwort-mpv - Antigravity IDE"
-        found = find_active_file(title, self.vault)
+        title = "my-note.md - 20260308110646-kardenwort-mpv - Antigravity IDE"
+        found = find_active_file(title, self.vault, "kardenwort-mpv")
 
         self.assertIsNotNone(found)
-        # Must find the visible copy, not the hidden one
+        self.assertEqual(
+            os.path.normcase(os.path.abspath(found)),
+            os.path.normcase(os.path.abspath(correct)),
+        )
+
+    def test_common_filename_in_code_workspace_returns_none(self):
+        """
+        The scenario that caused the seeds/dendron.templates bug:
+        editing README.md in a code project (not in the vault) while the
+        vault happens to contain a README.md somewhere else.
+        project_name='obsidian-paste-image' has no vault folder → returns None.
+        """
+        # Vault contains a README.md in an unrelated location
+        self._make_md("seeds", "dendron.templates", "README.md")
+
+        title = "20260529201233-obsidian-paste-image · Antigravity IDE - README.md"
+        # project_name derived from workspace token
+        found = find_active_file(title, self.vault, "obsidian-paste-image")
+        self.assertIsNone(found)
+
+    def test_ignores_hidden_directories_during_title_scan(self):
+        """The vault scan skips dotfile directories when searching by title."""
+        _hidden_md = self._make_md(".obsidian", "target-note.md")
+        visible_md = self._make_md("proj",      "target-note.md")
+
+        title = "target-note.md - kardenwort-mpv - Antigravity IDE"
+        found = find_active_file(title, self.vault, "proj")
+
+        self.assertIsNotNone(found)
         self.assertEqual(
             os.path.normcase(os.path.abspath(found)),
             os.path.normcase(os.path.abspath(visible_md)),
