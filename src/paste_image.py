@@ -41,7 +41,7 @@ def get_config(config_path: str = "config.ini") -> dict:
     All keys fall back to safe defaults so the script works without a
     config file.
     """
-    config = configparser.ConfigParser()
+    config = configparser.ConfigParser(interpolation=None)
     if os.path.exists(config_path):
         config.read(config_path, encoding="utf-8")
 
@@ -49,6 +49,8 @@ def get_config(config_path: str = "config.ini") -> dict:
         "vault_base":      config.get("Obsidian", "vault_base",      fallback=r"U:\voothi.vault"),
         "default_project": config.get("Obsidian", "default_project", fallback="default"),
         "assets_folder":   config.get("Obsidian", "assets_folder",   fallback="assets"),
+        "auto_create_project": config.getboolean("Obsidian", "auto_create_project", fallback=False),
+        "name_template":   config.get("Obsidian", "name_template",   fallback="%Y%m%d%H%M%S-{name}"),
     }
 
 
@@ -139,13 +141,21 @@ def discover_assets_dir(workspace: str | None, config: dict) -> tuple[str, str]:
     # If the workspace-derived project doesn't exist in the vault, fall back to
     # default_project so images always land inside the vault, never in CWD or
     # some random code-project directory.
+    # However, if auto_create_project is enabled, we create the project folder
+    # directly instead of falling back.
     if not os.path.isdir(vault_dir) and project_name != config["default_project"]:
-        print(
-            f"[*] Vault project '{project_name}' not found; "
-            f"falling back to default project: {config['default_project']!r}"
-        )
-        project_name = config["default_project"]
-        vault_dir    = os.path.join(vault_base, project_name)
+        if config.get("auto_create_project", False):
+            print(
+                f"[*] Vault project '{project_name}' not found; "
+                f"auto-creating project folder in vault_base."
+            )
+        else:
+            print(
+                f"[*] Vault project '{project_name}' not found; "
+                f"falling back to default project: {config['default_project']!r}"
+            )
+            project_name = config["default_project"]
+            vault_dir    = os.path.join(vault_base, project_name)
 
     assets_dir = os.path.join(vault_dir, config["assets_folder"])
 
@@ -254,11 +264,20 @@ def main() -> None:
         sys.exit(1)
 
     # ------------------------------------------------------------------ #
-    # 2. Build filename  (ZID-slug.png)
+    # 2. Build filename using name_template
     # ------------------------------------------------------------------ #
-    zid       = datetime.now().strftime("%Y%m%d%H%M%S")
+    now = datetime.now()
+    template = config.get("name_template", "%Y%m%d%H%M%S-{name}")
     safe_slug = re.sub(r"[^a-zA-Z0-9-]", "", args.name.lower().replace(" ", "-"))
-    filename  = f"{zid}-{safe_slug}.png"
+    
+    # Format standard strftime patterns, then replace the {name} placeholder
+    formatted_name = now.strftime(template).replace("{name}", safe_slug)
+    
+    # Ensure it ends with .png extension
+    if not formatted_name.lower().endswith(".png"):
+        filename = f"{formatted_name}.png"
+    else:
+        filename = formatted_name
 
     # ------------------------------------------------------------------ #
     # 3. Resolve target assets directory

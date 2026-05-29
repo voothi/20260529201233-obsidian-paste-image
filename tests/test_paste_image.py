@@ -78,11 +78,11 @@ class TestGetConfig(unittest.TestCase):
         self.assertEqual(cfg["assets_folder"], "assets")
 
     def test_reads_ini_values(self):
-        """Correctly reads all three keys from an existing INI file."""
+        """Correctly reads all keys from an existing INI file including auto_create_project."""
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".ini", delete=False, encoding="utf-8"
         ) as f:
-            f.write("[Obsidian]\nvault_base = Z:\\my_vault\ndefault_project = my-proj\nassets_folder = img\n")
+            f.write("[Obsidian]\nvault_base = Z:\\my_vault\ndefault_project = my-proj\nassets_folder = img\nauto_create_project = true\n")
             ini_path = f.name
 
         try:
@@ -90,6 +90,7 @@ class TestGetConfig(unittest.TestCase):
             self.assertEqual(cfg["vault_base"], r"Z:\my_vault")
             self.assertEqual(cfg["default_project"], "my-proj")
             self.assertEqual(cfg["assets_folder"], "img")
+            self.assertTrue(cfg["auto_create_project"])
         finally:
             os.unlink(ini_path)
 
@@ -178,6 +179,26 @@ class TestDiscoverAssetsDir(BaseVaultTest):
             os.path.normcase(os.path.abspath(expected)),
         )
         self.assertTrue(os.path.isdir(assets_dir))
+
+    def test_auto_create_project_true_creates_folder(self):
+        """
+        When auto_create_project is True, discover_assets_dir creates the project's
+        vault folder and uses it instead of falling back to default_project.
+        """
+        config_with_auto = self.config.copy()
+        config_with_auto["auto_create_project"] = True
+
+        assets_dir, project_name = discover_assets_dir(
+            "20260308110646-new-vault-project", config_with_auto
+        )
+        self.assertEqual(project_name, "new-vault-project")
+        expected = os.path.join(self.vault, "new-vault-project", "assets")
+        self.assertEqual(
+            os.path.normcase(os.path.abspath(assets_dir)),
+            os.path.normcase(os.path.abspath(expected)),
+        )
+        self.assertTrue(os.path.isdir(assets_dir))
+        self.assertTrue(os.path.isdir(os.path.join(self.vault, "new-vault-project")))
 
 
 # ---------------------------------------------------------------------------
@@ -490,6 +511,43 @@ class TestMainIntegration(BaseVaultTest):
         self.assertTrue(os.path.isdir(assets_dir))
         pngs = [f for f in os.listdir(assets_dir) if f.endswith(".png")]
         self.assertEqual(len(pngs), 1)
+
+    def test_custom_name_template_is_respected(self):
+        """When a custom name_template is configured, the saved filename matches the template."""
+        active_file = self._make_md("conversations", "my-note.md")
+        ini_path = os.path.join(self.vault, "config.ini")
+        with open(ini_path, "w", encoding="utf-8") as f:
+            f.write(
+                f"[Obsidian]\n"
+                f"vault_base = {self.vault}\n"
+                f"default_project = default-project\n"
+                f"assets_folder = assets\n"
+                f"name_template = mycustom-%Y-%m-%d-{{name}}-suffix\n"
+            )
+        img = self._make_clipboard_image()
+
+        # Patch datetime to control the date/time output
+        fixed_dt = MagicMock()
+        fixed_dt.strftime.side_effect = lambda fmt: fmt.replace("%Y", "2026").replace("%m", "05").replace("%d", "29")
+
+        with patch("paste_image.ImageGrab.grabclipboard", return_value=img), \
+             patch("paste_image.datetime") as mock_dt, \
+             patch("paste_image.pyperclip", create=True):
+
+            mock_dt.now.return_value = fixed_dt
+            sys.argv = [
+                "paste_image.py",
+                "--config", ini_path,
+                "--active-file", active_file,
+                "--name", "my cool image",
+            ]
+            main()
+
+        assets_dir = os.path.join(os.path.dirname(active_file), "assets")
+        self.assertTrue(os.path.isdir(assets_dir))
+        pngs = [f for f in os.listdir(assets_dir) if f.endswith(".png")]
+        self.assertEqual(len(pngs), 1)
+        self.assertEqual(pngs[0], "mycustom-2026-05-29-my-cool-image-suffix.png")
 
 
 if __name__ == "__main__":
