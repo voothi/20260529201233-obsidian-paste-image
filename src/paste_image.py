@@ -113,13 +113,24 @@ def discover_assets_dir(workspace: str | None, config: dict) -> tuple[str, str]:
     else:
         project_name = config["default_project"]
 
-    vault_dir  = os.path.join(vault_base, project_name)
+    vault_dir = os.path.join(vault_base, project_name)
+
+    # If the workspace-derived project doesn't exist in the vault, fall back to
+    # default_project so images always land inside the vault, never in CWD or
+    # some random code-project directory.
+    if not os.path.isdir(vault_dir) and project_name != config["default_project"]:
+        print(
+            f"[*] Vault project '{project_name}' not found; "
+            f"falling back to default project: {config['default_project']!r}"
+        )
+        project_name = config["default_project"]
+        vault_dir    = os.path.join(vault_base, project_name)
+
     assets_dir = os.path.join(vault_dir, config["assets_folder"])
 
-    # Auto-create assets folder only when the project vault already exists
-    if os.path.isdir(vault_dir) and not os.path.isdir(assets_dir):
-        os.makedirs(assets_dir, exist_ok=True)
-        print(f"[*] Created assets directory: {assets_dir}")
+    # Always ensure the assets directory exists (creates vault_dir too if needed)
+    os.makedirs(assets_dir, exist_ok=True)
+    print(f"[*] Assets directory: {assets_dir}")
 
     return assets_dir, project_name
 
@@ -268,10 +279,9 @@ def main() -> None:
         print("[*] Falling back to workspace directory resolution.")
         assets_dir, _proj = discover_assets_dir(args.workspace, config)
 
-    # Final safety net: fall back to CWD
-    if not assets_dir or not os.path.isdir(assets_dir):
-        assets_dir = os.path.abspath(".")
-        print(f"[*] Ultimate fallback — saving to current directory: {assets_dir}")
+    # discover_assets_dir always creates the directory (including default_project
+    # fallback), so there is no need for a CWD safety net that would produce
+    # broken wikilinks.
 
     # ------------------------------------------------------------------ #
     # 4. Guard against overwriting an existing file (same ZID = same second)

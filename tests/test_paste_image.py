@@ -152,12 +152,32 @@ class TestDiscoverAssetsDir(BaseVaultTest):
             os.path.normcase(os.path.abspath(expected)),
         )
 
-    def test_does_not_create_assets_when_project_missing(self):
-        """Assets folder is NOT created if the project vault dir doesn't exist."""
+    def test_creates_assets_even_when_project_dir_missing(self):
+        """
+        Assets directory is always created, even if the vault project dir
+        did not exist beforehand. This ensures images never land in CWD.
+        """
         assets_dir, _ = discover_assets_dir(
             "20260308110646-nonexistent-project", self.config
         )
-        self.assertFalse(os.path.exists(assets_dir))
+        # Falls back to default_project and creates the directory
+        self.assertTrue(os.path.isdir(assets_dir))
+
+    def test_falls_back_to_default_project_when_workspace_missing(self):
+        """
+        When the workspace-derived project has no folder in the vault,
+        discover_assets_dir silently falls back to default_project.
+        """
+        assets_dir, project_name = discover_assets_dir(
+            "20260308110646-not-a-real-project", self.config
+        )
+        self.assertEqual(project_name, "default-project")
+        expected = os.path.join(self.vault, "default-project", "assets")
+        self.assertEqual(
+            os.path.normcase(os.path.abspath(assets_dir)),
+            os.path.normcase(os.path.abspath(expected)),
+        )
+        self.assertTrue(os.path.isdir(assets_dir))
 
 
 # ---------------------------------------------------------------------------
