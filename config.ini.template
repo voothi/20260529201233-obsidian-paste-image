@@ -1,13 +1,26 @@
 [Obsidian]
-# FALLBACK CONFIGURATION: These paths are only used if the --workspace argument
-# is not passed to the script. When --workspace is provided, the script will
-# dynamically infer U:\voothi.vault\<project>\assets to save the pasted image.
+# -----------------------------------------------------------------------
+# FALLBACK CONFIGURATION
+# These values are used only when the script cannot determine where to
+# save the image from the active editor context.
+#
+# Resolution priority:
+#   1. --active-file <path>   Direct path to the open .md file (from AHK)
+#   2. --title <window>       Window title; script scans vault for filename
+#   3. --workspace <token>    ZID-prefixed workspace name (e.g. 20260308110646-kardenwort-mpv);
+#                             script strips the ZID and resolves <vault_base>/<project>/assets
+#   4. default_project below  Used when none of the above can be determined
+# -----------------------------------------------------------------------
 
-# Vault base directory
+# Root directory that contains all your Obsidian vaults / projects.
+# Example: vault_base = U:\voothi.vault
 vault_base = U:\voothi.vault
 
-# Default project name fallback
+# Vault project name to use as a last-resort fallback.
+# Set to an existing folder under vault_base, or "default".
 default_project = default
 
-# Subfolder inside the project vault to store attachments
+# Name of the subfolder inside each vault project where images are stored.
+# In classic mode (active file known) this folder is created next to the
+# markdown file being edited, mirroring the original dendron behaviour.
 assets_folder = assets

@@ -1,108 +1,420 @@
+"""
+Tests for the Obsidian Paste Image Utility.
+
+Coverage
+--------
+get_config            — defaults and INI overrides
+discover_assets_dir   — workspace-name parsing, auto-creation, fallback
+find_active_file      — title-based scan, recent-file fallback, missing vault
+build_wikilink        — classic (active-file relative) and project modes
+main() integration    — overwrite guard, --active-file param, clipboard image
+"""
+
 import os
 import sys
-import unittest
+import time
 import shutil
-import re
-from unittest.mock import patch, MagicMock
+import tempfile
+import unittest
+from unittest.mock import patch, MagicMock, PropertyMock
 from PIL import Image
 
-# Add src folder to import path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
+# Make src importable regardless of the working directory
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from paste_image import get_config, discover_assets_dir, find_active_file
+from paste_image import (
+    get_config,
+    discover_assets_dir,
+    find_active_file,
+    build_wikilink,
+    main,
+)
 
-class TestPasteImage(unittest.TestCase):
-    
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_tiny_png(path: str) -> None:
+    """Creates a 4×4 black PNG at *path*."""
+    img = Image.new("RGB", (4, 4), color=(0, 0, 0))
+    img.save(path, "PNG")
+
+
+class BaseVaultTest(unittest.TestCase):
+    """Provides a fresh temporary vault for each test and tears it down."""
+
     def setUp(self):
+        self.vault = tempfile.mkdtemp(prefix="test_vault_")
         self.config = {
-            "vault_base": "mock_vault_base",
+            "vault_base":      self.vault,
             "default_project": "default-project",
-            "assets_folder": "assets"
+            "assets_folder":   "assets",
         }
-        os.makedirs(self.config["vault_base"], exist_ok=True)
-        
-    def tearDown(self):
-        if os.path.exists(self.config["vault_base"]):
-            shutil.rmtree(self.config["vault_base"])
 
-    def test_discover_assets_dir_with_workspace(self):
-        """
-        Verify that discover_assets_dir infers project vault and assets folder
-        dynamically from active Antigravity workspace window tokens.
-        """
-        # Create mock project folder
-        project_dir = os.path.join(self.config["vault_base"], "kardenwort-mpv")
-        os.makedirs(project_dir, exist_ok=True)
-        
-        # Test workspace with leading ZID
-        workspace_token = "20260308110646-kardenwort-mpv"
-        assets_dir, project_name = discover_assets_dir(workspace_token, self.config)
-        
+    def tearDown(self):
+        shutil.rmtree(self.vault, ignore_errors=True)
+
+    def _make_md(self, *rel_parts: str) -> str:
+        """Creates an empty .md file at vault/<rel_parts> and returns the path."""
+        path = os.path.join(self.vault, *rel_parts)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("# Test\n")
+        return path
+
+
+# ---------------------------------------------------------------------------
+# get_config
+# ---------------------------------------------------------------------------
+
+class TestGetConfig(unittest.TestCase):
+
+    def test_defaults_without_ini(self):
+        """Returns safe defaults when no config file exists."""
+        cfg = get_config("/nonexistent/config.ini")
+        self.assertEqual(cfg["vault_base"], r"U:\voothi.vault")
+        self.assertEqual(cfg["default_project"], "default")
+        self.assertEqual(cfg["assets_folder"], "assets")
+
+    def test_reads_ini_values(self):
+        """Correctly reads all three keys from an existing INI file."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".ini", delete=False, encoding="utf-8"
+        ) as f:
+            f.write("[Obsidian]\nvault_base = Z:\\my_vault\ndefault_project = my-proj\nassets_folder = img\n")
+            ini_path = f.name
+
+        try:
+            cfg = get_config(ini_path)
+            self.assertEqual(cfg["vault_base"], r"Z:\my_vault")
+            self.assertEqual(cfg["default_project"], "my-proj")
+            self.assertEqual(cfg["assets_folder"], "img")
+        finally:
+            os.unlink(ini_path)
+
+    def test_partial_ini_keeps_defaults(self):
+        """Missing keys in INI fall back to defaults."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".ini", delete=False, encoding="utf-8"
+        ) as f:
+            f.write("[Obsidian]\nvault_base = X:\\vault\n")
+            ini_path = f.name
+
+        try:
+            cfg = get_config(ini_path)
+            self.assertEqual(cfg["vault_base"], r"X:\vault")
+            self.assertEqual(cfg["default_project"], "default")
+        finally:
+            os.unlink(ini_path)
+
+
+# ---------------------------------------------------------------------------
+# discover_assets_dir
+# ---------------------------------------------------------------------------
+
+class TestDiscoverAssetsDir(BaseVaultTest):
+
+    def test_workspace_with_zid_prefix(self):
+        """Strips 14-digit ZID prefix and resolves project assets folder."""
+        project_dir = os.path.join(self.vault, "kardenwort-mpv")
+        os.makedirs(project_dir)
+
+        assets_dir, project_name = discover_assets_dir(
+            "20260308110646-kardenwort-mpv", self.config
+        )
+
         self.assertEqual(project_name, "kardenwort-mpv")
         self.assertEqual(
-            os.path.abspath(assets_dir), 
-            os.path.abspath(os.path.join(project_dir, "assets"))
+            os.path.normcase(os.path.abspath(assets_dir)),
+            os.path.normcase(os.path.abspath(os.path.join(project_dir, "assets"))),
         )
-        # Ensure the assets directory was automatically created on disk
-        self.assertTrue(os.path.exists(assets_dir))
+        # Auto-created
+        self.assertTrue(os.path.isdir(assets_dir))
 
-    def test_discover_assets_dir_fallback(self):
-        """
-        Verify that discover_assets_dir falls back gracefully to default settings
-        when no active workspace is passed.
-        """
+    def test_workspace_with_workspace_suffix(self):
+        """Handles 'X (Workspace)' suffix from the Antigravity title bar."""
+        project_dir = os.path.join(self.vault, "kardenwort-mpv")
+        os.makedirs(project_dir)
+
+        _, project_name = discover_assets_dir(
+            "20260308110646-kardenwort-mpv (Workspace)", self.config
+        )
+        self.assertEqual(project_name, "kardenwort-mpv")
+
+    def test_fallback_no_workspace(self):
+        """Returns default_project path when workspace is None."""
         assets_dir, project_name = discover_assets_dir(None, self.config)
         self.assertEqual(project_name, "default-project")
+        expected = os.path.join(self.vault, "default-project", "assets")
         self.assertEqual(
-            os.path.abspath(assets_dir), 
-            os.path.abspath(os.path.join(self.config["vault_base"], "default-project", "assets"))
+            os.path.normcase(os.path.abspath(assets_dir)),
+            os.path.normcase(os.path.abspath(expected)),
         )
 
-    def test_find_active_file_by_title(self):
-        """
-        Verify that find_active_file correctly parses a markdown filename
-        from a window title and scans the vault to find it.
-        """
-        project_dir = os.path.join(self.config["vault_base"], "kardenwort-mpv")
-        conversations_dir = os.path.join(project_dir, "conversations")
-        os.makedirs(conversations_dir, exist_ok=True)
-        
-        target_file = os.path.join(conversations_dir, "20260529193801-but-you-can-make.md")
-        with open(target_file, "w", encoding="utf-8") as f:
-            f.write("# Hello")
-            
-        title = "20260529193801-but-you-can-make.md - 20260308110646-kardenwort-mpv - Antigravity IDE"
-        active_path = find_active_file(title, self.config["vault_base"])
-        
-        self.assertIsNotNone(active_path)
-        self.assertEqual(os.path.abspath(active_path), os.path.abspath(target_file))
+    def test_does_not_create_assets_when_project_missing(self):
+        """Assets folder is NOT created if the project vault dir doesn't exist."""
+        assets_dir, _ = discover_assets_dir(
+            "20260308110646-nonexistent-project", self.config
+        )
+        self.assertFalse(os.path.exists(assets_dir))
 
-    def test_find_active_file_by_recent_modification(self):
-        """
-        Verify that find_active_file falls back to scanning the vault for the
-        most recently modified markdown file when no title matches.
-        """
-        project_dir = os.path.join(self.config["vault_base"], "kardenwort-mpv")
-        conversations_dir = os.path.join(project_dir, "conversations")
-        os.makedirs(conversations_dir, exist_ok=True)
-        
-        file1 = os.path.join(conversations_dir, "20260529120000-old.md")
-        file2 = os.path.join(conversations_dir, "20260529130000-recent.md")
-        
-        # Write files with offset modification times
-        with open(file1, "w", encoding="utf-8") as f:
-            f.write("old")
-        os.utime(file1, (1000000, 1000000))
-        
-        with open(file2, "w", encoding="utf-8") as f:
-            f.write("recent")
-        os.utime(file2, (2000000, 2000000))
-        
-        # No matching window title passed
-        active_path = find_active_file(None, self.config["vault_base"])
-        
-        self.assertIsNotNone(active_path)
-        self.assertEqual(os.path.abspath(active_path), os.path.abspath(file2))
 
-if __name__ == '__main__':
-    unittest.main()
+# ---------------------------------------------------------------------------
+# find_active_file
+# ---------------------------------------------------------------------------
+
+class TestFindActiveFile(BaseVaultTest):
+
+    def test_resolves_from_window_title(self):
+        """Finds the correct .md file when its name appears in the title."""
+        target = self._make_md("kardenwort-mpv", "conversations",
+                               "20260529193801-my-note.md")
+
+        title = "20260529193801-my-note.md - 20260308110646-kardenwort-mpv - Antigravity IDE"
+        found = find_active_file(title, self.vault)
+
+        self.assertIsNotNone(found)
+        self.assertEqual(
+            os.path.normcase(os.path.abspath(found)),
+            os.path.normcase(os.path.abspath(target)),
+        )
+
+    def test_returns_most_recently_modified_file_as_fallback(self):
+        """Returns the most recently modified .md file when no title match."""
+        old = self._make_md("proj", "conversations", "20260101-old.md")
+        new = self._make_md("proj", "conversations", "20260601-new.md")
+
+        os.utime(old, (1_000_000, 1_000_000))
+        os.utime(new, (9_000_000, 9_000_000))
+
+        found = find_active_file(None, self.vault)
+
+        self.assertIsNotNone(found)
+        self.assertEqual(
+            os.path.normcase(os.path.abspath(found)),
+            os.path.normcase(os.path.abspath(new)),
+        )
+
+    def test_returns_none_for_missing_vault(self):
+        """Returns None gracefully when vault_base does not exist."""
+        result = find_active_file(None, "/totally/missing/path")
+        self.assertIsNone(result)
+
+    def test_title_without_md_filename(self):
+        """Falls back to most-recent scan when title contains no .md name."""
+        target = self._make_md("proj", "note.md")
+        os.utime(target, (5_000_000, 5_000_000))
+
+        found = find_active_file("Some random window title", self.vault)
+
+        self.assertIsNotNone(found)
+        self.assertEqual(
+            os.path.normcase(os.path.abspath(found)),
+            os.path.normcase(os.path.abspath(target)),
+        )
+
+    def test_ignores_hidden_directories(self):
+        """Files inside .hidden directories are never returned."""
+        hidden_md = self._make_md(".obsidian", "config.md")
+        visible_md = self._make_md("proj", "visible.md")
+
+        os.utime(hidden_md, (9_999_999, 9_999_999))   # more recent but hidden
+        os.utime(visible_md, (1_000_000, 1_000_000))
+
+        found = find_active_file(None, self.vault)
+        self.assertIsNotNone(found)
+        self.assertNotEqual(os.path.abspath(found), os.path.abspath(hidden_md))
+
+
+# ---------------------------------------------------------------------------
+# build_wikilink
+# ---------------------------------------------------------------------------
+
+class TestBuildWikilink(BaseVaultTest):
+
+    def test_classic_mode_relative_path(self):
+        """In classic mode the link is relative to the active file's directory."""
+        active_file = self._make_md("conversations", "my-note.md")
+        assets_dir  = os.path.join(self.vault, "conversations", "assets")
+        os.makedirs(assets_dir, exist_ok=True)
+        image_path  = os.path.join(assets_dir, "20260529123456-pasted-image.png")
+
+        link = build_wikilink(image_path, active_file, "assets")
+
+        self.assertEqual(link, "![[assets/20260529123456-pasted-image.png]]")
+
+    def test_project_mode_uses_assets_prefix(self):
+        """Without an active file the link uses the configured assets prefix."""
+        image_path = os.path.join(self.vault, "assets", "20260529123456-pasted-image.png")
+
+        link = build_wikilink(image_path, None, "assets")
+
+        self.assertEqual(link, "![[assets/20260529123456-pasted-image.png]]")
+
+    def test_project_mode_no_assets_folder(self):
+        """When assets_folder is empty the link is just the filename."""
+        image_path = os.path.join(self.vault, "20260529123456-img.png")
+
+        link = build_wikilink(image_path, None, "")
+
+        self.assertEqual(link, "![[20260529123456-img.png]]")
+
+    def test_classic_mode_subfolder(self):
+        """Classic mode works even when assets are in a nested subfolder."""
+        active_file = self._make_md("a", "b", "note.md")
+        assets_dir  = os.path.join(self.vault, "a", "b", "assets")
+        os.makedirs(assets_dir, exist_ok=True)
+        image_path  = os.path.join(assets_dir, "20260529123456-img.png")
+
+        link = build_wikilink(image_path, active_file, "assets")
+
+        self.assertIn("assets/20260529123456-img.png", link)
+
+
+# ---------------------------------------------------------------------------
+# Integration — main() via CLI args
+# ---------------------------------------------------------------------------
+
+class TestMainIntegration(BaseVaultTest):
+    """
+    Integration tests for the main() CLI entry-point.
+    PIL.ImageGrab.grabclipboard is mocked to avoid needing a real clipboard.
+    pyperclip is mocked to avoid clipboard writes during tests.
+    """
+
+    def _make_config_ini(self) -> str:
+        """Writes a config.ini pointing at self.vault and returns its path."""
+        ini_path = os.path.join(self.vault, "config.ini")
+        with open(ini_path, "w", encoding="utf-8") as f:
+            f.write(
+                f"[Obsidian]\n"
+                f"vault_base = {self.vault}\n"
+                f"default_project = default-project\n"
+                f"assets_folder = assets\n"
+            )
+        return ini_path
+
+    def _make_clipboard_image(self):
+        img = Image.new("RGB", (4, 4), color=(255, 0, 0))
+        return img
+
+    def test_active_file_param_saves_relative(self):
+        """--active-file causes the image to land in assets/ next to that file."""
+        active_file = self._make_md("conversations", "my-note.md")
+        ini         = self._make_config_ini()
+        img         = self._make_clipboard_image()
+
+        with patch("paste_image.ImageGrab.grabclipboard", return_value=img), \
+             patch("paste_image.pyperclip", create=True) as mock_clip:
+
+            mock_clip.copy = MagicMock()
+            sys.argv = [
+                "paste_image.py",
+                "--config", ini,
+                "--active-file", active_file,
+            ]
+            main()
+
+        assets_dir = os.path.join(os.path.dirname(active_file), "assets")
+        self.assertTrue(os.path.isdir(assets_dir))
+        pngs = [f for f in os.listdir(assets_dir) if f.endswith(".png")]
+        self.assertEqual(len(pngs), 1)
+
+    def test_overwrite_guard_exits_with_error(self):
+        """If the target file already exists main() exits with code 1."""
+        active_file = self._make_md("conversations", "note.md")
+        ini         = self._make_config_ini()
+        assets_dir  = os.path.join(os.path.dirname(active_file), "assets")
+        os.makedirs(assets_dir, exist_ok=True)
+
+        img = self._make_clipboard_image()
+
+        # Patch datetime so both calls produce the identical ZID → same filename
+        fixed_dt = MagicMock()
+        fixed_dt.strftime.return_value = "20260529120000"
+
+        with patch("paste_image.ImageGrab.grabclipboard", return_value=img), \
+             patch("paste_image.datetime") as mock_dt, \
+             patch("paste_image.pyperclip", create=True):
+
+            mock_dt.now.return_value = fixed_dt
+            sys.argv = [
+                "paste_image.py",
+                "--config", ini,
+                "--active-file", active_file,
+            ]
+            main()  # first call — should succeed
+
+        with patch("paste_image.ImageGrab.grabclipboard", return_value=img), \
+             patch("paste_image.datetime") as mock_dt, \
+             patch("paste_image.pyperclip", create=True):
+
+            mock_dt.now.return_value = fixed_dt
+            sys.argv = [
+                "paste_image.py",
+                "--config", ini,
+                "--active-file", active_file,
+            ]
+            with self.assertRaises(SystemExit) as ctx:
+                main()  # second call with identical ZID — must fail
+
+            self.assertEqual(ctx.exception.code, 1)
+
+    def test_invalid_active_file_falls_back_to_scan(self):
+        """A non-existent --active-file is silently ignored and scan runs."""
+        # Create a visible .md file in the vault
+        note = self._make_md("conversations", "20260529010000-note.md")
+        os.utime(note, (9_000_000, 9_000_000))
+        ini = self._make_config_ini()
+        img = self._make_clipboard_image()
+
+        with patch("paste_image.ImageGrab.grabclipboard", return_value=img), \
+             patch("paste_image.pyperclip", create=True):
+
+            sys.argv = [
+                "paste_image.py",
+                "--config", ini,
+                "--active-file", "/does/not/exist.md",
+            ]
+            main()  # should not crash
+
+        assets_dir = os.path.join(os.path.dirname(note), "assets")
+        pngs = [f for f in os.listdir(assets_dir) if f.endswith(".png")]
+        self.assertEqual(len(pngs), 1)
+
+    def test_no_image_in_clipboard_exits_with_error(self):
+        """Exits with code 1 when the clipboard has no image."""
+        ini = self._make_config_ini()
+
+        with patch("paste_image.ImageGrab.grabclipboard", return_value=None):
+            sys.argv = ["paste_image.py", "--config", ini]
+            with self.assertRaises(SystemExit) as ctx:
+                main()
+            self.assertEqual(ctx.exception.code, 1)
+
+    def test_workspace_param_derives_vault_project(self):
+        """--workspace resolves to the correct project assets directory."""
+        project_dir = os.path.join(self.vault, "kardenwort-mpv")
+        os.makedirs(project_dir)
+        ini = self._make_config_ini()
+        img = self._make_clipboard_image()
+
+        with patch("paste_image.ImageGrab.grabclipboard", return_value=img), \
+             patch("paste_image.pyperclip", create=True):
+
+            sys.argv = [
+                "paste_image.py",
+                "--config", ini,
+                "--workspace", "20260308110646-kardenwort-mpv",
+            ]
+            main()
+
+        assets_dir = os.path.join(project_dir, "assets")
+        self.assertTrue(os.path.isdir(assets_dir))
+        pngs = [f for f in os.listdir(assets_dir) if f.endswith(".png")]
+        self.assertEqual(len(pngs), 1)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
