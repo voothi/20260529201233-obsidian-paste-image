@@ -24,3 +24,18 @@ default_project = default
 # In classic mode (active file known) this folder is created next to the
 # markdown file being edited, mirroring the original dendron behaviour.
 assets_folder = assets
+
+# Automatically create the vault project folder in vault_base if it doesn't exist,
+# instead of falling back to default_project.
+auto_create_project = true
+
+# Tooltip display duration in milliseconds (e.g. 4000 for 4 seconds).
+# If empty or 0, tooltips are disabled completely.
+tooltip = 4000
+
+# The naming template for saved image files.
+# Supported variables:
+#   {name}  - The descriptive slug/name (e.g. pasted-image)
+#   All standard strftime formats, e.g. %Y (Year), %m (Month), %d (Day), %H (Hour), %M (Minute), %S (Second)
+# Example value `%Y%m%d%H%M%S-{name}` produces `20260529215137-pasted-image.png`.
+name_template = %Y%m%d%H%M%S-{name}
