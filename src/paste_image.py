@@ -172,26 +172,11 @@ def discover_assets_dir(workspace: str | None, config: dict) -> tuple[str, str]:
 
 def build_wikilink(filepath: str, active_file: str | None, assets_folder: str) -> str:
     """
-    Returns an Obsidian Wikilink for *filepath*.
-
-    * **Classic mode** (active file known): produces a path relative to the
-      directory containing the active markdown file, matching the behaviour
-      of the original dendron paste-image plugin.
-    * **Project mode** (workspace-level): prefixes with the configured
-      assets_folder name so Obsidian resolves the link correctly.
+    Returns an Obsidian Wikilink for *filepath*, using the clean base filename
+    without any folder path prefix, matching Obsidian's shortest path format.
     """
-    if active_file:
-        active_dir = os.path.dirname(active_file)
-        rel = os.path.relpath(filepath, active_dir).replace("\\", "/")
-        return f"![[{rel}]]"
-
-    # Project / workspace mode
     filename = os.path.basename(filepath)
-    if assets_folder and assets_folder != ".":
-        link_path = f"{assets_folder}/{filename}"
-    else:
-        link_path = filename
-    return f"![[{link_path}]]"
+    return f"![[{filename}]]"
 
 
 # ---------------------------------------------------------------------------

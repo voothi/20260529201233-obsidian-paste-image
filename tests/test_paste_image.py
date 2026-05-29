@@ -319,15 +319,15 @@ class TestBuildWikilink(BaseVaultTest):
 
         link = build_wikilink(image_path, active_file, "assets")
 
-        self.assertEqual(link, "![[assets/20260529123456-pasted-image.png]]")
+        self.assertEqual(link, "![[20260529123456-pasted-image.png]]")
 
     def test_project_mode_uses_assets_prefix(self):
-        """Without an active file the link uses the configured assets prefix."""
+        """Without an active file the link is just the clean base filename."""
         image_path = os.path.join(self.vault, "assets", "20260529123456-pasted-image.png")
 
         link = build_wikilink(image_path, None, "assets")
 
-        self.assertEqual(link, "![[assets/20260529123456-pasted-image.png]]")
+        self.assertEqual(link, "![[20260529123456-pasted-image.png]]")
 
     def test_project_mode_no_assets_folder(self):
         """When assets_folder is empty the link is just the filename."""
@@ -338,7 +338,7 @@ class TestBuildWikilink(BaseVaultTest):
         self.assertEqual(link, "![[20260529123456-img.png]]")
 
     def test_classic_mode_subfolder(self):
-        """Classic mode works even when assets are in a nested subfolder."""
+        """Classic mode produces only the clean base filename."""
         active_file = self._make_md("a", "b", "note.md")
         assets_dir  = os.path.join(self.vault, "a", "b", "assets")
         os.makedirs(assets_dir, exist_ok=True)
@@ -346,7 +346,7 @@ class TestBuildWikilink(BaseVaultTest):
 
         link = build_wikilink(image_path, active_file, "assets")
 
-        self.assertIn("assets/20260529123456-img.png", link)
+        self.assertEqual(link, "![[20260529123456-img.png]]")
 
 
 # ---------------------------------------------------------------------------
