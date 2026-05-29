@@ -58,53 +58,41 @@ def get_config(config_path: str = "config.ini") -> dict:
 
 def find_active_file(title: str | None, vault_base: str) -> str | None:
     """
-    Resolves the path of the file currently open in the editor.
+    Resolves the path of the markdown file currently open in the editor
+    by searching the vault for a filename extracted from the window title.
 
     Strategy
     --------
-    1. If *title* contains a ``*.md`` filename, scan *vault_base*
-       recursively until that exact filename is found.
-    2. Fallback: return the most recently modified ``.md`` file anywhere
-       in *vault_base*.
+    If *title* contains a ``*.md`` filename, scan *vault_base* recursively
+    until that exact filename is found and return it.
 
-    Returns ``None`` when the vault base does not exist.
+    The "most recently modified file" scan has been intentionally removed:
+    it produced random, unrelated locations when the title contained no .md
+    name (e.g. when a config file or terminal was active).
+
+    Returns ``None`` when the vault base does not exist or no match is found.
     """
     if not os.path.isdir(vault_base):
         return None
 
-    # 1. Filename extracted from window title
-    if title:
-        match = re.search(r"([\w-]+\.md)\b", title)
-        if match:
-            target_name = match.group(1)
-            for root, dirs, files in os.walk(vault_base):
-                dirs[:] = [d for d in dirs if not d.startswith(".")]
-                if target_name in files:
-                    found = os.path.join(root, target_name)
-                    print(f"[*] Active file resolved from window title: {found}")
-                    return found
+    if not title:
+        return None
 
-    # 2. Most recently modified .md file
-    print("[*] Active file not in title; scanning vault for the most recently modified .md…")
-    latest_file: str | None = None
-    latest_mtime: float = 0.0
+    match = re.search(r"([\w-]+\.md)\b", title)
+    if not match:
+        print("[*] No .md filename found in window title — skipping vault scan.")
+        return None
 
+    target_name = match.group(1)
     for root, dirs, files in os.walk(vault_base):
         dirs[:] = [d for d in dirs if not d.startswith(".")]
-        for f in files:
-            if f.endswith(".md"):
-                fpath = os.path.join(root, f)
-                try:
-                    mtime = os.path.getmtime(fpath)
-                    if mtime > latest_mtime:
-                        latest_mtime = mtime
-                        latest_file = fpath
-                except OSError:
-                    continue
+        if target_name in files:
+            found = os.path.join(root, target_name)
+            print(f"[*] Active file resolved from window title: {found}")
+            return found
 
-    if latest_file:
-        print(f"[*] Fallback — most recently modified markdown file: {latest_file}")
-    return latest_file
+    print(f"[*] '{target_name}' not found in vault — skipping vault scan.")
+    return None
 
 
 def discover_assets_dir(workspace: str | None, config: dict) -> tuple[str, str]:
@@ -248,12 +236,25 @@ def main() -> None:
 
     if active_file:
         if os.path.isfile(active_file):
-            print(f"[*] Active file from direct parameter: {active_file}")
+            # Classic mode only applies when the active file is INSIDE the vault.
+            # If the user is editing a code file / config / terminal outside the
+            # vault, skip classic mode so we don't scatter assets into random dirs.
+            norm_active = os.path.normcase(os.path.abspath(active_file))
+            norm_vault  = os.path.normcase(os.path.abspath(vault_base))
+            if norm_active.startswith(norm_vault + os.sep):
+                print(f"[*] Active file inside vault: {active_file}")
+            else:
+                print(
+                    f"[*] Active file is outside the vault ({active_file!r}); "
+                    "using workspace resolution instead."
+                )
+                active_file = None
         else:
             print(f"[!] Warning: --active-file path does not exist: {active_file!r}. Ignoring.")
             active_file = None
 
-    if active_file is None:
+    # Only scan the vault by title when --active-file was not supplied at all
+    if active_file is None and args.active_file is None:
         active_file = find_active_file(args.title, vault_base)
 
     assets_dir: str | None = None
@@ -264,7 +265,7 @@ def main() -> None:
         os.makedirs(assets_dir, exist_ok=True)
         print(f"[*] Classic mode — assets relative to active file: {assets_dir}")
     else:
-        print("[!] Active file could not be determined; falling back to workspace directory.")
+        print("[*] Falling back to workspace directory resolution.")
         assets_dir, _proj = discover_assets_dir(args.workspace, config)
 
     # Final safety net: fall back to CWD

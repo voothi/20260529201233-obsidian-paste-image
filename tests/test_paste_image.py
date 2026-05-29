@@ -180,51 +180,54 @@ class TestFindActiveFile(BaseVaultTest):
             os.path.normcase(os.path.abspath(target)),
         )
 
-    def test_returns_most_recently_modified_file_as_fallback(self):
-        """Returns the most recently modified .md file when no title match."""
-        old = self._make_md("proj", "conversations", "20260101-old.md")
-        new = self._make_md("proj", "conversations", "20260601-new.md")
+    def test_returns_none_when_no_title_given(self):
+        """
+        Returns None immediately when no title is provided.
+        The 'most recently modified .md' scan has been removed to prevent
+        random, unrelated file locations being used as save targets.
+        """
+        self._make_md("proj", "conversations", "20260101-old.md")
+        self._make_md("proj", "conversations", "20260601-new.md")
 
-        os.utime(old, (1_000_000, 1_000_000))
-        os.utime(new, (9_000_000, 9_000_000))
-
-        found = find_active_file(None, self.vault)
-
-        self.assertIsNotNone(found)
-        self.assertEqual(
-            os.path.normcase(os.path.abspath(found)),
-            os.path.normcase(os.path.abspath(new)),
-        )
+        result = find_active_file(None, self.vault)
+        self.assertIsNone(result)
 
     def test_returns_none_for_missing_vault(self):
         """Returns None gracefully when vault_base does not exist."""
         result = find_active_file(None, "/totally/missing/path")
         self.assertIsNone(result)
 
-    def test_title_without_md_filename(self):
-        """Falls back to most-recent scan when title contains no .md name."""
-        target = self._make_md("proj", "note.md")
-        os.utime(target, (5_000_000, 5_000_000))
+    def test_returns_none_when_title_has_no_md_filename(self):
+        """
+        Returns None when the window title contains no .md filename.
+        No fallback scan is performed.
+        """
+        self._make_md("proj", "note.md")
+        result = find_active_file("Some random window title without md", self.vault)
+        self.assertIsNone(result)
 
-        found = find_active_file("Some random window title", self.vault)
+    def test_returns_none_when_md_not_found_in_vault(self):
+        """Returns None when the .md filename from the title is not in the vault."""
+        result = find_active_file(
+            "nonexistent-note.md - kardenwort-mpv - Antigravity IDE",
+            self.vault,
+        )
+        self.assertIsNone(result)
+
+    def test_ignores_hidden_directories_during_title_scan(self):
+        """The vault scan skips dotfile directories when searching by title."""
+        hidden_md = self._make_md(".obsidian", "target-note.md")
+        visible_md = self._make_md("proj", "target-note.md")
+
+        title = "target-note.md - kardenwort-mpv - Antigravity IDE"
+        found = find_active_file(title, self.vault)
 
         self.assertIsNotNone(found)
+        # Must find the visible copy, not the hidden one
         self.assertEqual(
             os.path.normcase(os.path.abspath(found)),
-            os.path.normcase(os.path.abspath(target)),
+            os.path.normcase(os.path.abspath(visible_md)),
         )
-
-    def test_ignores_hidden_directories(self):
-        """Files inside .hidden directories are never returned."""
-        hidden_md = self._make_md(".obsidian", "config.md")
-        visible_md = self._make_md("proj", "visible.md")
-
-        os.utime(hidden_md, (9_999_999, 9_999_999))   # more recent but hidden
-        os.utime(visible_md, (1_000_000, 1_000_000))
-
-        found = find_active_file(None, self.vault)
-        self.assertIsNotNone(found)
-        self.assertNotEqual(os.path.abspath(found), os.path.abspath(hidden_md))
 
 
 # ---------------------------------------------------------------------------
@@ -361,27 +364,47 @@ class TestMainIntegration(BaseVaultTest):
 
             self.assertEqual(ctx.exception.code, 1)
 
-    def test_invalid_active_file_falls_back_to_scan(self):
-        """A non-existent --active-file is silently ignored and scan runs."""
-        # Create a visible .md file in the vault
-        note = self._make_md("conversations", "20260529010000-note.md")
-        os.utime(note, (9_000_000, 9_000_000))
+    def test_active_file_outside_vault_falls_back_to_workspace(self):
+        """
+        When --active-file points to a file outside the vault (e.g. a config.ini
+        in a code project), classic mode is skipped and workspace resolution is
+        used instead. This prevents images scattering into unrelated directories.
+        """
+        # Create a project dir inside the vault for workspace resolution to find
+        project_dir = os.path.join(self.vault, "kardenwort-mpv")
+        os.makedirs(project_dir, exist_ok=True)
         ini = self._make_config_ini()
         img = self._make_clipboard_image()
 
-        with patch("paste_image.ImageGrab.grabclipboard", return_value=img), \
-             patch("paste_image.pyperclip", create=True):
+        # active_file is OUTSIDE the vault (simulate editing config.ini in a code project)
+        outside_file = os.path.join(tempfile.gettempdir(), "some-project", "config.ini")
+        os.makedirs(os.path.dirname(outside_file), exist_ok=True)
+        with open(outside_file, "w") as f:
+            f.write("[section]\nkey = value\n")
 
-            sys.argv = [
-                "paste_image.py",
-                "--config", ini,
-                "--active-file", "/does/not/exist.md",
-            ]
-            main()  # should not crash
+        try:
+            with patch("paste_image.ImageGrab.grabclipboard", return_value=img), \
+                 patch("paste_image.pyperclip", create=True):
 
-        assets_dir = os.path.join(os.path.dirname(note), "assets")
-        pngs = [f for f in os.listdir(assets_dir) if f.endswith(".png")]
-        self.assertEqual(len(pngs), 1)
+                sys.argv = [
+                    "paste_image.py",
+                    "--config", ini,
+                    "--active-file", outside_file,
+                    "--workspace", "20260308110646-kardenwort-mpv",
+                ]
+                main()  # should not crash
+
+            # Image must land in the workspace project assets, NOT next to config.ini
+            assets_dir = os.path.join(project_dir, "assets")
+            self.assertTrue(os.path.isdir(assets_dir))
+            pngs = [f for f in os.listdir(assets_dir) if f.endswith(".png")]
+            self.assertEqual(len(pngs), 1)
+
+            # config.ini directory must NOT have an assets folder
+            outside_assets = os.path.join(os.path.dirname(outside_file), "assets")
+            self.assertFalse(os.path.exists(outside_assets))
+        finally:
+            shutil.rmtree(os.path.dirname(outside_file), ignore_errors=True)
 
     def test_no_image_in_clipboard_exits_with_error(self):
         """Exits with code 1 when the clipboard has no image."""
