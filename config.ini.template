@@ -1,0 +1,13 @@
+[Obsidian]
+# FALLBACK CONFIGURATION: These paths are only used if the --workspace argument
+# is not passed to the script. When --workspace is provided, the script will
+# dynamically infer U:\voothi.vault\<project>\assets to save the pasted image.
+
+# Vault base directory
+vault_base = U:\voothi.vault
+
+# Default project name fallback
+default_project = default
+
+# Subfolder inside the project vault to store attachments
+assets_folder = assets
