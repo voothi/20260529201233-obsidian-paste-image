@@ -22,7 +22,7 @@ def get_config(config_path="config.ini"):
     
     # Defaults
     vault_base = config.get("Obsidian", "vault_base", fallback=r"U:\voothi.vault")
-    default_project = config.get("Obsidian", "default_project", fallback="kardenwort-mpv")
+    default_project = config.get("Obsidian", "default_project", fallback="default")
     assets_folder_name = config.get("Obsidian", "assets_folder", fallback="assets")
     
     return {
@@ -111,6 +111,7 @@ def main():
     parser.add_argument("-c", "--config", type=str, default="config.ini", help="Path to config file.")
     parser.add_argument("-n", "--name", type=str, default="pasted-image", help="Optional description slug to include in the filename.")
     parser.add_argument("-t", "--title", type=str, help="Active editor window title to resolve currently active markdown file path.")
+    parser.add_argument("-f", "--active-file", type=str, help="Path to the active markdown file being edited.")
     
     args = parser.parse_args()
     config = get_config(args.config)
@@ -148,7 +149,12 @@ def main():
 
     # 3. Discover target assets folder (Main: Active File classic way, Fallback: workspace base)
     vault_base = config["vault_base"]
-    active_file = find_active_file(args.title, vault_base)
+    
+    active_file = args.active_file
+    if active_file and os.path.exists(active_file):
+        print(f"[*] Found active file from direct parameter: {active_file}")
+    else:
+        active_file = find_active_file(args.title, vault_base)
     
     assets_dir = None
     if active_file:
