@@ -33,6 +33,11 @@ auto_create_project = true
 # If empty or 0, tooltips are disabled completely.
 tooltip = 4000
 
+# Optional AHK behavior toggle (used by obsidian-paste-image.ahk):
+# When true, the hotkey actively opens editor command palette and runs "Copy Path".
+# Default false keeps the hotkey non-intrusive and avoids editor command injection.
+editor_copy_path_probe = false
+
 # The naming template for saved image files.
 # Supported variables:
 #   {name}  - The descriptive slug/name (e.g. pasted-image)

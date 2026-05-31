@@ -27,6 +27,7 @@ from paste_image import (
     discover_assets_dir,
     find_active_file,
     build_wikilink,
+    normalize_workspace_name,
     main,
 )
 
@@ -108,6 +109,33 @@ class TestGetConfig(unittest.TestCase):
             self.assertEqual(cfg["default_project"], "default")
         finally:
             os.unlink(ini_path)
+
+
+# ---------------------------------------------------------------------------
+# normalize_workspace_name
+# ---------------------------------------------------------------------------
+
+class TestNormalizeWorkspaceName(unittest.TestCase):
+
+    def test_extracts_project_from_plain_workspace_token(self):
+        self.assertEqual(
+            normalize_workspace_name("20260308110646-kardenwort-mpv"),
+            "kardenwort-mpv",
+        )
+
+    def test_prefers_rightmost_token_from_vscode_style_title(self):
+        title = "20260530001202-conversation.md - 20260308110646-kardenwort-mpv - Visual Studio Code"
+        self.assertEqual(normalize_workspace_name(title), "kardenwort-mpv")
+
+    def test_handles_workspace_suffix(self):
+        self.assertEqual(
+            normalize_workspace_name("20260308110646-kardenwort-mpv (Workspace)"),
+            "kardenwort-mpv",
+        )
+
+    def test_returns_none_for_empty_input(self):
+        self.assertIsNone(normalize_workspace_name(""))
+        self.assertIsNone(normalize_workspace_name(None))
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +248,23 @@ class TestFindActiveFile(BaseVaultTest):
             os.path.normcase(os.path.abspath(found)),
             os.path.normcase(os.path.abspath(target)),
         )
+
+    def test_resolves_from_absolute_path_in_title(self):
+        """Uses an absolute markdown path from title when it points inside vault."""
+        target = self._make_md("kardenwort-mpv", "conversations", "my-note.md")
+        title = f"{target} - Antigravity IDE"
+
+        found = find_active_file(title, self.vault, None)
+        self.assertEqual(
+            os.path.normcase(os.path.abspath(found)),
+            os.path.normcase(os.path.abspath(target)),
+        )
+
+    def test_skips_unscoped_filename_scan(self):
+        """Does not scan entire vault by filename when project scope is unknown."""
+        self._make_md("kardenwort-mpv", "conversations", "my-note.md")
+        title = "my-note.md - Some Editor"
+        self.assertIsNone(find_active_file(title, self.vault, None))
 
     def test_returns_none_when_no_title_given(self):
         """

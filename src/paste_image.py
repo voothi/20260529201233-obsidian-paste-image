@@ -58,6 +58,24 @@ def get_config(config_path: str = "config.ini") -> dict:
 # Active-file resolution helpers
 # ---------------------------------------------------------------------------
 
+def normalize_workspace_name(workspace: str | None) -> str | None:
+    """
+    Normalizes a workspace token/title to a vault project name.
+    """
+    if not workspace:
+        return None
+
+    ws = workspace.strip()
+    tokens = re.findall(r"\d{14}-[\w-]+", ws)
+    if tokens:
+        # Prefer the rightmost token; VSCode titles often list file token first.
+        ws = tokens[-1]
+
+    ws = re.sub(r"^\d{14}[-_\s]*", "", ws)
+    ws = re.sub(r"\s*\(Workspace\).*", "", ws).strip()
+    ws = re.sub(r"\.md$", "", ws, flags=re.IGNORECASE).strip()
+    return ws or None
+
 def find_active_file(
     title: str | None,
     vault_base: str,
@@ -69,10 +87,11 @@ def find_active_file(
 
     Strategy
     --------
-    If *title* contains a ``*.md`` filename, scan the vault for it.
-    The search is **scoped** to ``vault_base/project_name/`` when
-    *project_name* is supplied — this prevents common filenames such as
-    ``README.md`` from matching unrelated files in other vault projects.
+    If *title* contains a full absolute ``*.md`` path inside the vault,
+    use it directly. Otherwise, filename-based scans are performed only when
+    *project_name* is supplied, scoped to ``vault_base/project_name/``.
+    This prevents common filenames such as ``README.md`` from matching
+    unrelated files in other vault projects.
 
     When *project_name* is given but has no corresponding folder in the
     vault the function returns ``None`` immediately (the workspace is a
@@ -86,26 +105,41 @@ def find_active_file(
     if not title:
         return None
 
-    match = re.search(r"([\w-]+\.md)\b", title)
+    # Accept an absolute markdown path from the title if available.
+    abs_match = re.search(r"([A-Za-z]:\\[^\x00-\x1F`\"*<>?|]+\.md)", title)
+    if abs_match:
+        candidate_abs = abs_match.group(1)
+        if os.path.isfile(candidate_abs):
+            norm_candidate = os.path.normcase(os.path.abspath(candidate_abs))
+            norm_vault = os.path.normcase(os.path.abspath(vault_base))
+            if norm_candidate.startswith(norm_vault + os.sep):
+                print(f"[*] Active file resolved from absolute path in title: {candidate_abs}")
+                return candidate_abs
+
+    # Reliability guard: avoid unscoped global filename scans across all vaults.
+    if not project_name:
+        print("[*] No scoped workspace project for title scan — skipping filename vault scan.")
+        return None
+
+    # Capture a markdown filename token from the title, including common spaces
+    # and punctuation used in note names.
+    match = re.search(r"([^\\/:*?\"<>|\r\n]+\.md)\b", title, re.IGNORECASE)
     if not match:
         print("[*] No .md filename found in window title — skipping vault scan.")
         return None
 
-    target_name = match.group(1)
+    target_name = match.group(1).strip()
 
     # Scope the search to the project folder when we know which vault project
     # the workspace belongs to.  This stops generic names like README.md from
     # picking up files in unrelated vault subdirectories.
-    if project_name:
-        search_root = os.path.join(vault_base, project_name)
-        if not os.path.isdir(search_root):
-            print(
-                f"[*] Vault project '{project_name}' has no folder in vault "
-                "— skipping title scan."
-            )
-            return None
-    else:
-        search_root = vault_base
+    search_root = os.path.join(vault_base, project_name)
+    if not os.path.isdir(search_root):
+        print(
+            f"[*] Vault project '{project_name}' has no folder in vault "
+            "— skipping title scan."
+        )
+        return None
 
     for root, dirs, files in os.walk(search_root):
         dirs[:] = [d for d in dirs if not d.startswith(".")]
@@ -129,12 +163,7 @@ def discover_assets_dir(workspace: str | None, config: dict) -> tuple[str, str]:
     """
     vault_base = config["vault_base"]
 
-    if workspace:
-        # Strip the leading ZID (14 digits + separator) and "(Workspace)" suffix
-        project_name = re.sub(r"^\d{14}[-_\s]*", "", workspace.strip())
-        project_name = re.sub(r"\s*\(Workspace\).*", "", project_name).strip()
-    else:
-        project_name = config["default_project"]
+    project_name = normalize_workspace_name(workspace) or config["default_project"]
 
     vault_dir = os.path.join(vault_base, project_name)
 
@@ -293,10 +322,7 @@ def main() -> None:
     # Scope the scan to the workspace's vault project folder so common
     # filenames (README.md, index.md, etc.) cannot match unrelated vault files.
     if active_file is None and args.active_file is None:
-        ws_project: str | None = None
-        if args.workspace:
-            ws_project = re.sub(r"^\d{14}[-_\s]*", "", args.workspace.strip())
-            ws_project = re.sub(r"\s*\(Workspace\).*", "", ws_project).strip() or None
+        ws_project = normalize_workspace_name(args.workspace)
         active_file = find_active_file(args.title, vault_base, ws_project)
 
     assets_dir: str | None = None

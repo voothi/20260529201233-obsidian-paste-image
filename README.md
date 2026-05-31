@@ -17,11 +17,11 @@ A premium, lightweight Python command-line utility to automate extracting copied
 ---
 
 ## Features
-- **Classic Relative Mode (Main Option)**: Resolves the open active markdown note path via window title extraction (`--title`) or recently modified files, saving images inside the same directory's `assets/` subfolder (e.g., `U:\voothi.vault\kardenwort-mpv\conversations\assets`) exactly matching Obsidian's standard local attachment system.
+- **Classic Relative Mode (Main Option)**: Resolves the open active markdown note path via explicit active-file path or scoped title detection (`--title` + `--workspace`) and saves images inside the same directory's `assets/` subfolder (e.g., `U:\voothi.vault\kardenwort-mpv\conversations\assets`).
 - **Dynamic Vault Fallback (Spare Option)**: Automatically falls back to the workspace project-level `assets/` folder if no active editing file is found anywhere.
 - **ZID-Tracked Filenames**: Saves all pasted screenshots and clipboard images starting with a unique 14-digit ZID timestamp (`YYYYMMDDHHMMS-pasted-image.png`) to preserve perfect chronological traceability.
 - **Double Copied File Support**: Handles both raw image clipboard data (screenshots) and copied image files (Ctrl+C from explorer), reading and saving them dynamically.
-- **Silent AHK Wrapper**: Pairs beautifully with an AutoHotkey shortcut to run silently in the background and instantly paste Obsidian links.
+- **Silent AHK Wrapper**: Non-intrusive by default (no command palette injection) and instantly pastes Obsidian links.
 
 ---
 
@@ -78,18 +78,25 @@ python src/paste_image.py --name "main-menu-design"
 
 ## AHK Integration (`Ctrl + Alt + I`)
 
-Add the following shortcut inside `U:\voothi\20240411110510-autohotkey\obsidian-paste-image.ahk` to enable high-speed universal image pastes:
+Use `U:\voothi\20240411110510-autohotkey\obsidian-paste-image.ahk` for high-speed universal image pastes.  
+Default behavior is passive (no editor commands sent).  
+If you want explicit editor probing, set `editor_copy_path_probe = true` in this project's `config.ini`.
 ```autohotkey
 ^!i::
 {
-    ; Extract the active window title to parse the workspace (e.g., 20260308110646-kardenwort-mpv)
     activeTitle := WinGetTitle("A")
     workspace := ""
-    if RegExMatch(activeTitle, "(\d{14}-[\w-]+)", &match) {
-        workspace := match[1]
+    startPos := 1
+    while (pos := RegExMatch(activeTitle, "\d{14}-[\w-]+", &mWs, startPos)) {
+        workspace := mWs[0]
+        startPos := pos + StrLen(mWs[0])
     }
 
     cmd := "C:\Python\Python312\python.exe U:\voothi\20260529201233-obsidian-paste-image\src\paste_image.py"
+    if RegExMatch(activeTitle, "([A-Za-z]:\\[^\x00-\x1F`\"*<>?|]+\.md)", &mFile) {
+        if FileExist(mFile[1])
+            cmd .= " --active-file `"" . mFile[1] . "`""
+    }
     if (workspace != "") {
         cmd .= " --workspace `"" . workspace . "`""
     }
