@@ -10,4 +10,4 @@ __pycache__/
 *.pyd
 
 # Local settings config
-config.ini
+# config.ini
