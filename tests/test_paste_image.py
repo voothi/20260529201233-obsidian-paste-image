@@ -133,6 +133,28 @@ class TestNormalizeWorkspaceName(unittest.TestCase):
             "kardenwort-mpv",
         )
 
+    def test_prefers_leftmost_token_from_antigravity_style_title(self):
+        title = "20260308110646-kardenwort-mpv - Antigravity IDE - 20260608120040-conversation.md"
+        self.assertEqual(normalize_workspace_name(title), "kardenwort-mpv")
+
+    def test_antigravity_ide_with_vault_resolution(self):
+        import tempfile
+        import shutil
+        tmp_vault = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(tmp_vault, "kardenwort-mpv"), exist_ok=True)
+            title = "20260308110646-kardenwort-mpv - Antigravity IDE - 20260608120040-conversation.md"
+            self.assertEqual(
+                normalize_workspace_name(title, vault_base=tmp_vault, auto_create_project=False),
+                "kardenwort-mpv"
+            )
+            self.assertEqual(
+                normalize_workspace_name(title, vault_base=tmp_vault, auto_create_project=True),
+                "kardenwort-mpv"
+            )
+        finally:
+            shutil.rmtree(tmp_vault, ignore_errors=True)
+
     def test_returns_none_for_empty_input(self):
         self.assertIsNone(normalize_workspace_name(""))
         self.assertIsNone(normalize_workspace_name(None))

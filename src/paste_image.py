@@ -58,23 +58,102 @@ def get_config(config_path: str = "config.ini") -> dict:
 # Active-file resolution helpers
 # ---------------------------------------------------------------------------
 
-def normalize_workspace_name(workspace: str | None) -> str | None:
+def normalize_workspace_name(
+    workspace: str | None,
+    vault_base: str | None = None,
+    auto_create_project: bool = False,
+) -> str | None:
     """
-    Normalizes a workspace token/title to a vault project name.
+    Normalizes a workspace token/title to a vault project name,
+    resolving the correct project candidate for both VS Code and Antigravity IDE.
     """
     if not workspace:
         return None
 
-    ws = workspace.strip()
-    tokens = re.findall(r"\d{14}-[\w-]+", ws)
-    if tokens:
-        # Prefer the rightmost token; VSCode titles often list file token first.
-        ws = tokens[-1]
+    # If it matches an existing project directory directly, return it
+    if vault_base and os.path.isdir(os.path.join(vault_base, workspace)):
+        return workspace
 
-    ws = re.sub(r"^\d{14}[-_\s]*", "", ws)
-    ws = re.sub(r"\s*\(Workspace\).*", "", ws).strip()
-    ws = re.sub(r"\.md$", "", ws, flags=re.IGNORECASE).strip()
-    return ws or None
+    suffixes = [
+        "Visual Studio Code",
+        "VS Code",
+        "VSCodium",
+        "Cursor",
+        "Antigravity",
+        "Angigravity",
+        "Code - OSS",
+    ]
+
+    # Extract all possible ZID-prefixed workspace tokens
+    tokens = re.findall(r"\d{14}-[\w-]+", workspace)
+    candidates = list(reversed(tokens)) if tokens else []
+
+    # Split workspace by " - " and filter out IDE suffixes and filenames
+    parts = [p.strip() for p in workspace.split(" - ") if p.strip()]
+    for p in parts:
+        is_suffix = False
+        for suffix in suffixes:
+            if suffix.lower() in p.lower():
+                is_suffix = True
+                break
+        if is_suffix:
+            continue
+        clean_part = re.sub(r"\.code-workspace$", "", p, flags=re.IGNORECASE).strip()
+        clean_part = re.sub(r"\.md$", "", clean_part, flags=re.IGNORECASE).strip()
+        if clean_part and clean_part not in candidates:
+            candidates.append(clean_part)
+
+    # Fallback to the original title
+    candidates.append(workspace)
+
+    seen_candidates = set()
+    project_name = None
+
+    for candidate in candidates:
+        norm = candidate.strip()
+        norm = re.sub(r"^\d{14}[-_\s]*", "", norm)
+        norm = re.sub(r"\s*\(Workspace\).*", "", norm).strip()
+        norm = re.sub(r"\.code-workspace$", "", norm, flags=re.IGNORECASE).strip()
+        norm = re.sub(r"\.md$", "", norm, flags=re.IGNORECASE).strip()
+
+        if not norm or norm in seen_candidates:
+            continue
+        seen_candidates.add(norm)
+
+        # Check if the candidate is a file (ends with extension in original title)
+        is_file = bool(re.search(re.escape(candidate) + r"\.[a-zA-Z0-9]+", workspace, re.IGNORECASE))
+
+        # Check folder presence in vault
+        potential_dir = os.path.join(vault_base, norm) if vault_base else None
+        if potential_dir and os.path.isdir(potential_dir):
+            project_name = norm
+            print(f"[*] Workspace Focus - Selected project '{project_name}' from candidate '{candidate}'.")
+            break
+        if auto_create_project and not is_file:
+            project_name = norm
+            print(f"[*] Workspace Focus - Selected project '{project_name}' (will auto-create) from candidate '{candidate}'.")
+            break
+
+    # If no candidate could be resolved, fall back to the normalized first candidate
+    # that is not a file (to avoid selecting a markdown/python file as project).
+    if not project_name and candidates:
+        fallback_candidate = None
+        for candidate in candidates:
+            is_file = bool(re.search(re.escape(candidate) + r"\.[a-zA-Z0-9]+", workspace, re.IGNORECASE))
+            if not is_file:
+                fallback_candidate = candidate
+                break
+        if not fallback_candidate:
+            fallback_candidate = candidates[0]
+
+        norm = fallback_candidate.strip()
+        norm = re.sub(r"^\d{14}[-_\s]*", "", norm)
+        norm = re.sub(r"\s*\(Workspace\).*", "", norm).strip()
+        norm = re.sub(r"\.code-workspace$", "", norm, flags=re.IGNORECASE).strip()
+        norm = re.sub(r"\.md$", "", norm, flags=re.IGNORECASE).strip()
+        project_name = norm
+
+    return project_name or None
 
 def find_active_file(
     title: str | None,
@@ -163,7 +242,11 @@ def discover_assets_dir(workspace: str | None, config: dict) -> tuple[str, str]:
     """
     vault_base = config["vault_base"]
 
-    project_name = normalize_workspace_name(workspace) or config["default_project"]
+    project_name = normalize_workspace_name(
+        workspace,
+        vault_base=vault_base,
+        auto_create_project=config.get("auto_create_project", False)
+    ) or config["default_project"]
 
     vault_dir = os.path.join(vault_base, project_name)
 
@@ -322,7 +405,11 @@ def main() -> None:
     # Scope the scan to the workspace's vault project folder so common
     # filenames (README.md, index.md, etc.) cannot match unrelated vault files.
     if active_file is None and args.active_file is None:
-        ws_project = normalize_workspace_name(args.workspace)
+        ws_project = normalize_workspace_name(
+            args.workspace,
+            vault_base=vault_base,
+            auto_create_project=config.get("auto_create_project", False)
+        )
         active_file = find_active_file(args.title, vault_base, ws_project)
 
     assets_dir: str | None = None
