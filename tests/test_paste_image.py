@@ -162,6 +162,46 @@ class TestNormalizeWorkspaceName(unittest.TestCase):
     def test_obsidian_window_title_filtering(self):
         title = "20260608122139-conversation - voothi.vault - Obsidian v1.8.4"
         self.assertIsNone(normalize_workspace_name(title, vault_base="U:\\voothi.vault"))
+        
+        # Test that project name containing 'obsidian' is NOT treated as Obsidian app window
+        title_with_project = "note_creator.py - 20260529182202-obsidian-note-creator (Workspace) - Antigravity IDE"
+        import tempfile
+        import shutil
+        tmp_vault = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(tmp_vault, "obsidian-note-creator"), exist_ok=True)
+            self.assertEqual(
+                normalize_workspace_name(title_with_project, vault_base=tmp_vault, auto_create_project=True),
+                "obsidian-note-creator"
+            )
+        finally:
+            shutil.rmtree(tmp_vault, ignore_errors=True)
+
+    def test_git_working_tree_and_two_pass_resolution(self):
+        import tempfile
+        import shutil
+        tmp_vault = tempfile.mkdtemp()
+        try:
+            # Create the actual project folder U:\voothi.vault\obsidian-note-creator
+            os.makedirs(os.path.join(tmp_vault, "obsidian-note-creator"), exist_ok=True)
+            # Git working tree view title format
+            title = "note_creator.py (Working Tree) (note_creator.py) - 20260529182202-obsidian-note-creator (Workspace) - Antigravity IDE"
+            
+            # Since obsidian-note-creator folder exists, Pass 1 should find it and return it
+            # instead of attempting to auto-create "note_creator.py (Working Tree) (note_creator.py)"
+            self.assertEqual(
+                normalize_workspace_name(title, vault_base=tmp_vault, auto_create_project=True),
+                "obsidian-note-creator"
+            )
+            
+            # If the user is in a file without workspace name and auto-create is True,
+            # it should return None rather than auto-creating the file name as directory.
+            title_no_ws = "main.py - Antigravity IDE"
+            self.assertIsNone(
+                normalize_workspace_name(title_no_ws, vault_base=tmp_vault, auto_create_project=True)
+            )
+        finally:
+            shutil.rmtree(tmp_vault, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------

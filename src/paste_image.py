@@ -85,7 +85,7 @@ def normalize_workspace_name(
         "Obsidian",
     ]
 
-    is_obsidian = bool(re.search(r'\s*-\s*Obsidian\b', workspace, re.IGNORECASE))
+    is_obsidian = bool(re.search(r'\s+-\s+Obsidian\b', workspace, re.IGNORECASE))
     parts = [p.strip() for p in workspace.split(" - ") if p.strip()]
 
     # Extract all possible ZID-prefixed workspace tokens
@@ -119,6 +119,7 @@ def normalize_workspace_name(
         candidates.append(workspace)
 
     seen_candidates = set()
+    candidate_norms = []
     project_name = None
 
     for candidate in candidates:
@@ -132,38 +133,39 @@ def normalize_workspace_name(
             continue
         seen_candidates.add(norm)
 
-        # Check if the candidate is a file (ends with extension in original title)
-        is_file = bool(re.search(re.escape(candidate) + r"\.[a-zA-Z0-9]+", workspace, re.IGNORECASE))
+        # Check if the candidate itself contains a file extension or ends with extension in workspace
+        has_extension = bool(re.search(r'\.[a-zA-Z0-9\-]+(?:\b|$)', candidate))
+        is_file = has_extension or bool(re.search(re.escape(candidate) + r"\.[a-zA-Z0-9]+", workspace, re.IGNORECASE))
+        # Also check if it looks like a Git working tree / diff helper tab
+        is_git_temp = any(token in candidate for token in ["(Working Tree)", "(Revision)", "(Git", "(Index)", "(HEAD)"])
 
-        # Check folder presence in vault
+        candidate_norms.append((candidate, norm, is_file or is_git_temp))
+
+    # Pass 1: check for existing directory
+    for candidate, norm, is_file in candidate_norms:
         potential_dir = os.path.join(vault_base, norm) if vault_base else None
         if potential_dir and os.path.isdir(potential_dir):
             project_name = norm
             print(f"[*] Workspace Focus - Selected project '{project_name}' from candidate '{candidate}'.")
             break
-        if auto_create_project and not is_file:
-            project_name = norm
-            print(f"[*] Workspace Focus - Selected project '{project_name}' (will auto-create) from candidate '{candidate}'.")
-            break
+
+    # Pass 2: check for auto-creation
+    if not project_name and auto_create_project:
+        for candidate, norm, is_file in candidate_norms:
+            if not is_file:
+                project_name = norm
+                print(f"[*] Workspace Focus - Selected project '{project_name}' (will auto-create) from candidate '{candidate}'.")
+                break
 
     # If no candidate could be resolved, fall back to the normalized first candidate
     # that is not a file (to avoid selecting a markdown/python file as project).
-    if not project_name and candidates:
-        fallback_candidate = None
-        for candidate in candidates:
-            is_file = bool(re.search(re.escape(candidate) + r"\.[a-zA-Z0-9]+", workspace, re.IGNORECASE))
+    if not project_name and candidate_norms:
+        fallback_candidate_norm = None
+        for candidate, norm, is_file in candidate_norms:
             if not is_file:
-                fallback_candidate = candidate
+                fallback_candidate_norm = norm
                 break
-        if not fallback_candidate:
-            fallback_candidate = candidates[0]
-
-        norm = fallback_candidate.strip()
-        norm = re.sub(r"^\d{14}[-_\s]*", "", norm)
-        norm = re.sub(r"\s*\(Workspace\).*", "", norm).strip()
-        norm = re.sub(r"\.code-workspace$", "", norm, flags=re.IGNORECASE).strip()
-        norm = re.sub(r"\.md$", "", norm, flags=re.IGNORECASE).strip()
-        project_name = norm
+        project_name = fallback_candidate_norm
 
     return project_name or None
 
