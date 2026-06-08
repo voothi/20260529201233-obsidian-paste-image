@@ -159,6 +159,10 @@ class TestNormalizeWorkspaceName(unittest.TestCase):
         self.assertIsNone(normalize_workspace_name(""))
         self.assertIsNone(normalize_workspace_name(None))
 
+    def test_obsidian_window_title_filtering(self):
+        title = "20260608122139-conversation - voothi.vault - Obsidian v1.8.4"
+        self.assertIsNone(normalize_workspace_name(title, vault_base="U:\\voothi.vault"))
+
 
 # ---------------------------------------------------------------------------
 # discover_assets_dir
@@ -277,6 +281,16 @@ class TestFindActiveFile(BaseVaultTest):
         title = f"{target} - Antigravity IDE"
 
         found = find_active_file(title, self.vault, None)
+        self.assertEqual(
+            os.path.normcase(os.path.abspath(found)),
+            os.path.normcase(os.path.abspath(target)),
+        )
+
+    def test_global_zid_finding_without_project_scope(self):
+        target = self._make_md("my-project", "conversations", "20260608122139-conversation.md")
+        title = "20260608122139-conversation - voothi.vault - Obsidian v1.8.4"
+        found = find_active_file(title, self.vault, None)
+        self.assertIsNotNone(found)
         self.assertEqual(
             os.path.normcase(os.path.abspath(found)),
             os.path.normcase(os.path.abspath(target)),

@@ -82,15 +82,26 @@ def normalize_workspace_name(
         "Antigravity",
         "Angigravity",
         "Code - OSS",
+        "Obsidian",
     ]
+
+    is_obsidian = "obsidian" in workspace.lower()
+    parts = [p.strip() for p in workspace.split(" - ") if p.strip()]
 
     # Extract all possible ZID-prefixed workspace tokens
     tokens = re.findall(r"\d{14}-[\w-]+", workspace)
+    if is_obsidian and parts:
+        note_title = parts[0]
+        tokens = [t for t in tokens if t != note_title]
+
     candidates = list(reversed(tokens)) if tokens else []
 
     # Split workspace by " - " and filter out IDE suffixes and filenames
-    parts = [p.strip() for p in workspace.split(" - ") if p.strip()]
-    for p in parts:
+    for idx, p in enumerate(parts):
+        if is_obsidian and idx == 0:
+            continue
+        if vault_base and p.lower() == os.path.basename(vault_base).lower():
+            continue
         is_suffix = False
         for suffix in suffixes:
             if suffix.lower() in p.lower():
@@ -104,7 +115,8 @@ def normalize_workspace_name(
             candidates.append(clean_part)
 
     # Fallback to the original title
-    candidates.append(workspace)
+    if not is_obsidian:
+        candidates.append(workspace)
 
     seen_candidates = set()
     project_name = None
@@ -194,6 +206,19 @@ def find_active_file(
             if norm_candidate.startswith(norm_vault + os.sep):
                 print(f"[*] Active file resolved from absolute path in title: {candidate_abs}")
                 return candidate_abs
+
+    # ZID global discovery: if the title contains a ZID-prefixed token, search vault_base globally.
+    zid_match = re.search(r"\b(\d{14}-[\w-]+)", title)
+    if zid_match:
+        target_name = zid_match.group(1)
+        if not target_name.lower().endswith(".md"):
+            target_name += ".md"
+        for root, dirs, files in os.walk(vault_base):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            if target_name in files:
+                found = os.path.join(root, target_name)
+                print(f"[*] Active file resolved globally via ZID from window title: {found}")
+                return found
 
     # Reliability guard: avoid unscoped global filename scans across all vaults.
     if not project_name:
