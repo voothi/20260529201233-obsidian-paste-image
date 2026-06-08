@@ -85,7 +85,7 @@ def normalize_workspace_name(
         "Obsidian",
     ]
 
-    is_obsidian = "obsidian" in workspace.lower()
+    is_obsidian = bool(re.search(r'\s*-\s*Obsidian\b', workspace, re.IGNORECASE))
     parts = [p.strip() for p in workspace.split(" - ") if p.strip()]
 
     # Extract all possible ZID-prefixed workspace tokens
