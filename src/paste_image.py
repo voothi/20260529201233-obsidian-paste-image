@@ -358,6 +358,11 @@ def main() -> None:
         config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", config_path)
     config = get_config(config_path)
 
+    import logging
+    log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "paste_image.log")
+    logging.basicConfig(filename=log_file, level=logging.DEBUG, format='%(asctime)s %(message)s')
+    logging.debug(f"ARGS: active_file={args.active_file!r}, workspace={args.workspace!r}, title={args.title!r}")
+
     # ------------------------------------------------------------------ #
     # 1. Grab image from clipboard
     # ------------------------------------------------------------------ #
@@ -438,6 +443,7 @@ def main() -> None:
             auto_create_project=config.get("auto_create_project", False)
         )
         active_file = find_active_file(args.title, vault_base, ws_project)
+        logging.debug(f"find_active_file returned: {active_file!r}")
 
     assets_dir: str | None = None
 
@@ -446,9 +452,11 @@ def main() -> None:
         assets_dir = os.path.join(active_dir, config["assets_folder"])
         os.makedirs(assets_dir, exist_ok=True)
         print(f"[*] Classic mode — assets relative to active file: {assets_dir}")
+        logging.debug(f"Classic mode active_file={active_file!r}, assets_dir={assets_dir!r}")
     else:
         print("[*] Falling back to workspace directory resolution.")
         assets_dir, _proj = discover_assets_dir(args.workspace, config)
+        logging.debug(f"Workspace fallback assets_dir={assets_dir!r}")
 
     # discover_assets_dir always creates the directory (including default_project
     # fallback), so there is no need for a CWD safety net that would produce
