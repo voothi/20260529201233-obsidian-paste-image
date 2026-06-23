@@ -428,10 +428,10 @@ def main() -> None:
             print(f"[!] Warning: --active-file path does not exist: {active_file!r}. Ignoring.")
             active_file = None
 
-    # Only scan the vault by title when --active-file was not supplied at all.
+    # Scan the vault by title if --active-file was not supplied or was invalid.
     # Scope the scan to the workspace's vault project folder so common
     # filenames (README.md, index.md, etc.) cannot match unrelated vault files.
-    if active_file is None and args.active_file is None:
+    if not active_file:
         ws_project = normalize_workspace_name(
             args.workspace,
             vault_base=vault_base,
