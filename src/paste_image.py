@@ -210,9 +210,8 @@ def find_active_file(
                 return candidate_abs
 
     # ZID global discovery: if the title contains a ZID-prefixed token, search vault_base globally.
-    zid_match = re.search(r"\b(\d{14}-[\w-]+)", title)
-    if zid_match:
-        target_name = zid_match.group(1)
+    zid_matches = re.findall(r"\b(\d{14}-[\w-]+)", title)
+    for target_name in zid_matches:
         if not target_name.lower().endswith(".md"):
             target_name += ".md"
         for root, dirs, files in os.walk(vault_base):
@@ -227,14 +226,18 @@ def find_active_file(
         print("[*] No scoped workspace project for title scan — skipping filename vault scan.")
         return None
 
-    # Capture a markdown filename token from the title, including common spaces
-    # and punctuation used in note names.
-    match = re.search(r"([^\\/:*?\"<>|\r\n]+\.md)\b", title, re.IGNORECASE)
-    if not match:
+    # Capture a markdown filename token from the title by splitting on ' - '
+    # which is the standard window title separator.
+    parts = [p.strip() for p in title.split(" - ")]
+    target_name = None
+    for p in parts:
+        if p.lower().endswith(".md"):
+            target_name = p
+            break
+
+    if not target_name:
         print("[*] No .md filename found in window title — skipping vault scan.")
         return None
-
-    target_name = match.group(1).strip()
 
     # Scope the search to the project folder when we know which vault project
     # the workspace belongs to.  This stops generic names like README.md from
